@@ -169,6 +169,21 @@
     </div>
 
     <script>
+        function setMessage(text, isError = false) {
+            const msg = document.getElementById('msg');
+            msg.textContent = text || '';
+            msg.style.color = isError ? '#ff6d6d' : '#7fd4ff';
+        }
+
+        function resetPreview(message = '', isError = false) {
+            const resultImg = document.getElementById('result-img');
+            const placeholder = document.getElementById('placeholder-text');
+            resultImg.style.display = 'none';
+            resultImg.removeAttribute('src');
+            placeholder.style.display = 'block';
+            setMessage(message, isError);
+        }
+
         // Load models
         async function loadModels() {
             const res = await fetch('/api/models');
@@ -184,9 +199,7 @@
         // Reset App
         function resetApp() {
             document.getElementById('gen-form').reset();
-            document.getElementById('result-img').style.display = 'none';
-            document.getElementById('placeholder-text').style.display = 'block';
-            document.getElementById('msg').textContent = 'Đã làm mới phiên làm việc.';
+            resetPreview('Đã làm mới phiên làm việc.');
         }
 
         // Clear Uploads
@@ -195,6 +208,7 @@
             const res = await fetch('/api/clear-uploads', {method: 'POST'});
             const data = await res.json();
             alert(data.message || data.error);
+            setMessage(data.message || data.error, !data.success);
         }
 
         // Handle Generate
@@ -210,6 +224,8 @@
             loader.style.display = 'block';
             placeholder.style.display = 'none';
             resultImg.style.display = 'none';
+            resultImg.removeAttribute('src');
+            setMessage('');
 
             const formData = new FormData(e.target);
             try {
@@ -219,16 +235,23 @@
                     resultImg.src = `/media/outputs/${data.generated_image}`;
                     resultImg.style.display = 'block';
                     loader.style.display = 'none';
+                    setMessage(`Tạo ảnh thành công: ${data.generated_image}`);
                 } else {
+                    resetPreview(`Lỗi: ${data.error}`, true);
                     alert("Lỗi: " + data.error);
                 }
             } catch (err) {
+                resetPreview("Lỗi kết nối server.", true);
                 alert("Lỗi kết nối server.");
             } finally {
                 btn.disabled = false;
                 btn.textContent = "Bắt đầu tạo ảnh";
                 loader.style.display = 'none';
             }
+        };
+
+        document.getElementById('result-img').onerror = () => {
+            resetPreview('Không thể hiển thị ảnh vừa tạo (file ảnh không hợp lệ).', true);
         };
 
         loadModels();
