@@ -13,8 +13,7 @@
             --text-main: #ffffff;
             --text-muted: #a0a0b0;
             --border-color: #222230;
-            /* Phóng to cơ bản 30% */
-            --scale-factor: 1.3; 
+            --scale-factor: 1.3;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
@@ -31,7 +30,7 @@
 
         .container {
             width: 100%;
-            max-width: calc(1000px * var(--scale-factor)); /* Phóng to chiều rộng */
+            max-width: calc(1000px * var(--scale-factor));
             display: grid;
             grid-template-columns: 1fr 1.2fr;
             gap: calc(2rem * var(--scale-factor));
@@ -77,6 +76,13 @@
             outline: none;
         }
 
+        .hint {
+            color: var(--text-muted);
+            font-size: calc(0.75rem * var(--scale-factor));
+            margin-top: calc(-1rem * var(--scale-factor));
+            margin-bottom: calc(1rem * var(--scale-factor));
+        }
+
         .btn-group {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -101,6 +107,7 @@
 
         .btn-secondary { background: transparent; color: var(--text-muted); border: 1px solid var(--border-color); }
         .btn-secondary:hover { color: white; border-color: white; }
+        .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
         .btn-danger { background: #331111; color: #ff5555; border: 1px solid #552222; }
         .btn-danger:hover { background: #551111; color: #ff8888; }
@@ -147,6 +154,12 @@
 
                 <label>Ảnh tham chiếu</label>
                 <input type="file" id="images" name="images" multiple accept="image/*">
+                <div class="hint">Tối đa 4 ảnh tham chiếu mỗi lần phân tích.</div>
+
+                <button type="button" class="btn-secondary" id="analyze-ref-btn">Phân tích ảnh tham chiếu</button>
+
+                <label style="margin-top: 1rem;">Prompt tham chiếu (có thể chỉnh tay)</label>
+                <textarea id="reference-prompt" name="reference_prompt" rows="6" placeholder="Kết quả phân tích ảnh tham chiếu sẽ xuất hiện ở đây..."></textarea>
 
                 <button type="submit" class="btn-primary" id="gen-btn">Bắt đầu tạo ảnh</button>
             </form>
@@ -169,6 +182,15 @@
     </div>
 
     <script>
+        const form = document.getElementById('gen-form');
+        const imagesInput = document.getElementById('images');
+        const referencePromptInput = document.getElementById('reference-prompt');
+        const analyzeRefBtn = document.getElementById('analyze-ref-btn');
+
+        const MAX_REFERENCE_IMAGES = 4;
+        const RESIZE_MAX_SIDE = 1280;
+        const RESIZE_OUTPUT_QUALITY = 0.85;
+
         function setMessage(text, isError = false) {
             const msg = document.getElementById('msg');
             msg.textContent = text || '';
@@ -184,43 +206,220 @@
             setMessage(message, isError);
         }
 
-        // Load models
+        function getSelectedReferenceCount() {
+            return imagesInput.files ? imagesInput.files.length : 0;
+        }
+
+        function hasSelectedReferenceImages() {
+            return getSelectedReferenceCount() > 0;
+        }
+
+        function validateReferenceImageCount(showAlert = true) {
+            const count = getSelectedReferenceCount();
+            if (count <= MAX_REFERENCE_IMAGES) {
+                return true;
+            }
+
+            const msg = `Bạn đã chọn ${count} ảnh. Tối đa ${MAX_REFERENCE_IMAGES} ảnh tham chiếu mỗi lần phân tích.`;
+            setMessage(msg, true);
+            if (showAlert) {
+                alert(msg);
+            }
+            return false;
+        }
+
+        function updateAnalyzeButtonAvailability() {
+            const count = getSelectedReferenceCount();
+            analyzeRefBtn.disabled = count === 0 || count > MAX_REFERENCE_IMAGES;
+            if (count === 0) {
+                analyzeRefBtn.textContent = 'Phân tích ảnh tham chiếu';
+            }
+        }
+
+        function setAnalyzeLoading(isLoading) {
+            analyzeRefBtn.disabled = isLoading;
+            analyzeRefBtn.textContent = isLoading ? 'Đang phân tích ảnh...' : 'Phân tích ảnh tham chiếu';
+        }
+
+        function getFileNameBase(filename) {
+            const lastDotIndex = filename.lastIndexOf('.');
+            if (lastDotIndex <= 0) {
+                return filename || 'reference';
+            }
+            return filename.slice(0, lastDotIndex);
+        }
+
+        function optimizeReferenceImage(file) {
+            return new Promise((resolve, reject) => {
+                const objectUrl = URL.createObjectURL(file);
+                const img = new Image();
+
+                img.onload = () => {
+                    try {
+                        const maxSide = Math.max(img.width, img.height) || 1;
+                        const ratio = Math.min(1, RESIZE_MAX_SIDE / maxSide);
+                        const targetWidth = Math.max(1, Math.round(img.width * ratio));
+                        const targetHeight = Math.max(1, Math.round(img.height * ratio));
+
+                        const canvas = document.createElement('canvas');
+                        canvas.width = targetWidth;
+                        canvas.height = targetHeight;
+
+                        const ctx = canvas.getContext('2d');
+                        if (!ctx) {
+                            URL.revokeObjectURL(objectUrl);
+                            reject(new Error('Không khởi tạo được canvas context.'));
+                            return;
+                        }
+
+                        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+                        canvas.toBlob((blob) => {
+                            URL.revokeObjectURL(objectUrl);
+                            if (!blob) {
+                                reject(new Error('Trình duyệt không tạo được blob ảnh sau resize.'));
+                                return;
+                            }
+
+                            const optimized = new File(
+                                [blob],
+                                `${getFileNameBase(file.name)}.jpg`,
+                                { type: 'image/jpeg', lastModified: Date.now() }
+                            );
+                            resolve(optimized);
+                        }, 'image/jpeg', RESIZE_OUTPUT_QUALITY);
+                    } catch (error) {
+                        URL.revokeObjectURL(objectUrl);
+                        reject(error);
+                    }
+                };
+
+                img.onerror = () => {
+                    URL.revokeObjectURL(objectUrl);
+                    reject(new Error('File ảnh không hợp lệ hoặc không đọc được.'));
+                };
+
+                img.src = objectUrl;
+            });
+        }
+
+        async function optimizeReferenceImages(files) {
+            const optimizedFiles = [];
+            for (const file of files) {
+                try {
+                    const optimized = await optimizeReferenceImage(file);
+                    optimizedFiles.push(optimized);
+                } catch (error) {
+                    const reason = error && error.message ? error.message : 'Lỗi không xác định.';
+                    throw new Error(`Không thể tối ưu ảnh "${file.name}": ${reason}`);
+                }
+            }
+            return optimizedFiles;
+        }
+
         async function loadModels() {
             const res = await fetch('/api/models');
             const data = await res.json();
             const select = document.getElementById('model-select');
-            if(data.models.length > 0) {
+            if (data.models.length > 0) {
                 select.innerHTML = data.models.map(m => `<option value="${m}">${m}</option>`).join('');
             } else {
                 select.innerHTML = '<option>Không tìm thấy model</option>';
             }
         }
 
-        // Reset App
-        function resetApp() {
-            document.getElementById('gen-form').reset();
-            resetPreview('Đã làm mới phiên làm việc.');
+        async function analyzeReferenceImages() {
+            if (!hasSelectedReferenceImages()) {
+                setMessage('Chưa có ảnh tham chiếu để phân tích.', true);
+                alert('Vui lòng chọn ít nhất 1 ảnh tham chiếu.');
+                return;
+            }
+
+            if (!validateReferenceImageCount(true)) {
+                return;
+            }
+
+            setAnalyzeLoading(true);
+            setMessage('Đang tối ưu ảnh tham chiếu...');
+
+            try {
+                const optimizedFiles = await optimizeReferenceImages(Array.from(imagesInput.files));
+
+                setMessage('Đang phân tích ảnh tham chiếu...');
+                const formData = new FormData();
+                optimizedFiles.forEach((file) => {
+                    formData.append('images', file);
+                });
+
+                const res = await fetch('/api/reference-analyze', { method: 'POST', body: formData });
+                const data = await res.json();
+
+                if (data.success) {
+                    referencePromptInput.value = data.reference_prompt || '';
+
+                    const message = `Đã phân tích ảnh tham chiếu bằng ${data.source_model}. Bạn có thể chỉnh prompt tham chiếu trước khi generate.`;
+                    setMessage(message, false);
+                } else {
+                    referencePromptInput.value = '';
+                    const errorMessage = `Lỗi phân tích ảnh: ${data.error}`;
+                    setMessage(errorMessage, true);
+                    alert(errorMessage);
+                }
+            } catch (err) {
+                referencePromptInput.value = '';
+                const isResizeError = err && typeof err.message === 'string' && err.message.startsWith('Không thể tối ưu ảnh');
+                const message = isResizeError
+                    ? err.message
+                    : 'Không thể kết nối server khi phân tích ảnh tham chiếu.';
+                setMessage(message, true);
+                alert(`Lỗi: ${message}`);
+            } finally {
+                setAnalyzeLoading(false);
+                updateAnalyzeButtonAvailability();
+            }
         }
 
-        // Clear Uploads
+        function resetApp() {
+            form.reset();
+            referencePromptInput.value = '';
+            resetPreview('Đã làm mới phiên làm việc.');
+            updateAnalyzeButtonAvailability();
+        }
+
         async function clearUploads() {
-            if(!confirm("Bạn có chắc muốn xóa tất cả ảnh đã tải lên? (Ảnh AI tạo sẽ được giữ lại)")) return;
-            const res = await fetch('/api/clear-uploads', {method: 'POST'});
+            if (!confirm('Bạn có chắc muốn xóa tất cả ảnh đã tải lên? (Ảnh AI tạo sẽ được giữ lại)')) return;
+            const res = await fetch('/api/clear-uploads', { method: 'POST' });
             const data = await res.json();
             alert(data.message || data.error);
+
+            if (data.success) {
+                imagesInput.value = '';
+                referencePromptInput.value = '';
+            }
+
             setMessage(data.message || data.error, !data.success);
+            updateAnalyzeButtonAvailability();
         }
 
-        // Handle Generate
-        document.getElementById('gen-form').onsubmit = async (e) => {
+        form.onsubmit = async (e) => {
             e.preventDefault();
             const btn = document.getElementById('gen-btn');
             const loader = document.getElementById('loader');
             const placeholder = document.getElementById('placeholder-text');
             const resultImg = document.getElementById('result-img');
-            
+
+            if (!validateReferenceImageCount(true)) {
+                return;
+            }
+
+            if (hasSelectedReferenceImages() && !referencePromptInput.value.trim()) {
+                const msg = 'Bạn đã chọn ảnh tham chiếu nhưng chưa có prompt tham chiếu. Vui lòng bấm "Phân tích ảnh tham chiếu" trước khi tạo ảnh.';
+                setMessage(msg, true);
+                alert(msg);
+                return;
+            }
+
             btn.disabled = true;
-            btn.textContent = "Đang tính toán...";
+            btn.textContent = 'Đang tính toán...';
             loader.style.display = 'block';
             placeholder.style.display = 'none';
             resultImg.style.display = 'none';
@@ -231,29 +430,47 @@
             try {
                 const res = await fetch('/api/generate', { method: 'POST', body: formData });
                 const data = await res.json();
-                if(data.success) {
+                if (data.success) {
                     resultImg.src = `/media/outputs/${data.generated_image}`;
                     resultImg.style.display = 'block';
                     loader.style.display = 'none';
                     setMessage(`Tạo ảnh thành công: ${data.generated_image}`);
                 } else {
                     resetPreview(`Lỗi: ${data.error}`, true);
-                    alert("Lỗi: " + data.error);
+                    alert('Lỗi: ' + data.error);
                 }
             } catch (err) {
-                resetPreview("Lỗi kết nối server.", true);
-                alert("Lỗi kết nối server.");
+                resetPreview('Lỗi kết nối server.', true);
+                alert('Lỗi kết nối server.');
             } finally {
                 btn.disabled = false;
-                btn.textContent = "Bắt đầu tạo ảnh";
+                btn.textContent = 'Bắt đầu tạo ảnh';
                 loader.style.display = 'none';
             }
         };
+
+        imagesInput.addEventListener('change', () => {
+            referencePromptInput.value = '';
+            const count = getSelectedReferenceCount();
+
+            if (count > 0 && count <= MAX_REFERENCE_IMAGES) {
+                setMessage(`Đã chọn ${count} ảnh tham chiếu. Bấm "Phân tích ảnh tham chiếu" để tạo prompt.`);
+            } else if (count > MAX_REFERENCE_IMAGES) {
+                setMessage(`Bạn đã chọn ${count} ảnh. Tối đa ${MAX_REFERENCE_IMAGES} ảnh mỗi lần phân tích.`, true);
+            } else {
+                setMessage('');
+            }
+
+            updateAnalyzeButtonAvailability();
+        });
+
+        analyzeRefBtn.addEventListener('click', analyzeReferenceImages);
 
         document.getElementById('result-img').onerror = () => {
             resetPreview('Không thể hiển thị ảnh vừa tạo (file ảnh không hợp lệ).', true);
         };
 
+        updateAnalyzeButtonAvailability();
         loadModels();
     </script>
 </body>
