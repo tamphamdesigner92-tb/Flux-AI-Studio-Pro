@@ -257,6 +257,7 @@ def reference_analyze():
         "Bạn là chuyên gia phân tích ảnh để tạo prompt text-to-image. "
         "Phân tích toàn bộ ảnh người dùng gửi (nhiều ảnh thì tổng hợp điểm chung và điểm nổi bật), "
         "sau đó TRẢ VỀ DUY NHẤT một JSON object hợp lệ, không có markdown, không có giải thích thêm. "
+        "LƯU Ý QUAN TRỌNG: Toàn bộ nội dung miêu tả bên trong các giá trị của JSON phải được viết hoàn toàn bằng Tiếng Việt. " # <-- Thêm dòng này
         "Schema bắt buộc: "
         "{\"subject\":\"...\",\"style\":\"...\",\"composition\":\"...\","
         "\"lighting\":\"...\",\"color_palette\":\"...\",\"camera\":\"...\","
